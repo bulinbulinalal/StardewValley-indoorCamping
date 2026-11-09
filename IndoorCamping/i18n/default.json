@@ -1,0 +1,7 @@
+{
+  "multiplayer": "Indoor Camping currently supports single-player only.",
+  "unsupported": "Camping isn't supported in this temporary or special location.",
+  "disabled": "Camping in this location is disabled in Indoor Camping's config.json.",
+  "blocked": "The tent cannot cover an exit, ladder, action tile, or map boundary.",
+  "recovery-failed": "Your campsite couldn't be restored. You have been returned safely home."
+}

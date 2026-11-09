@@ -1,0 +1,7 @@
+{
+  "multiplayer": "室内露营目前仅支持单人游戏。",
+  "unsupported": "此临时或特殊地点不支持露营。",
+  "disabled": "已在室内露营的 config.json 中关闭此类地点。",
+  "blocked": "帐篷不能覆盖出口、梯子、交互地块或地图边界。",
+  "recovery-failed": "无法恢复露营地点，已将你安全送回农舍。"
+}

@@ -1,0 +1,9 @@
+{
+  "Name": "Indoor Camping",
+  "Author": "Zhang",
+  "Version": "0.1.0",
+  "Description": "Use vanilla Tent Kits indoors and wake on the same refreshed mine floor. Single-player only.",
+  "UniqueID": "Zhang.IndoorCamping",
+  "EntryDll": "IndoorCamping.dll",
+  "MinimumApiVersion": "4.5.2"
+}
