@@ -6,14 +6,22 @@
 
 ## 下载模组
 
-[下载 Indoor Camping 0.1.0 测试版安装包](downloads/IndoorCamping-0.1.0.zip?raw=true)
+[下载 Indoor Camping 0.1.1 测试版安装包](downloads/IndoorCamping-0.1.1.zip?raw=true)
 
 让原版帐篷工具包能在普通室内、普通矿井和骷髅洞穴使用。仅支持 PC 单人游戏。
+
+## 0.1.1 修复说明
+
+0.1.0 收到实测反馈：矿洞睡眠后在农舍醒来，且人物无法操作。请更新到 0.1.1。此版把早晨恢复改为等待跨天、存档和淡入完成后再执行，传送成功后才清除记录；传送回调丢失超过 600 个更新帧时，取消本次恢复、回农舍并清理传送与操作锁定。新增自动回归检查覆盖淡入等待、重复早晨事件、传送无回调超时和完成后不再重试。
+
+若更新后仍遇到无法操作，可在 **SMAPI 控制台** 输入 `indoorcamping_recover`，该命令会终止恢复流程并送回农舍、解除锁定。退出游戏后再替换模组文件夹；保留自己的 `config.json`。旧版当天存档若已丢失露营记录，无法凭空恢复原矿层，需要重新进入矿洞验证。
+
+修复已通过编译和无界面回归检查，尚未完成实际游戏内跨天验收。
 
 ## 安装和使用
 
 1. 使用已安装 SMAPI 的星露谷物语。目前编译基准为本机 **游戏 1.6.15、SMAPI 4.5.2**。
-2. 解压 `dist/IndoorCamping-0.1.0.zip`，把里面的 `IndoorCamping` 文件夹放入游戏 `Mods` 目录。
+2. 解压 `dist/IndoorCamping-0.1.1.zip`，把里面的 `IndoorCamping` 文件夹放入游戏 `Mods` 目录。
 3. 从 SMAPI 启动游戏，携带原版帐篷工具包，在有足够空地的位置放置并交互入睡。
 
 原版物品、配方、外观、占地、消耗和睡眠结算不变。成功放置时按原版消耗一个工具包；取消睡眠不会再扣物品，帐篷仍留在地上。并非取消睡眠后退还已放置的工具包。
@@ -45,7 +53,7 @@
 .\build.ps1 -GamePath 'D:\Games\Stardew Valley' -CompilerPath 'C:\path\to\Roslyn\csc.exe'
 ```
 
-输出为 `dist/IndoorCamping/` 和 `dist/IndoorCamping-0.1.0.zip`。也提供 `IndoorCamping/IndoorCamping.csproj`，有 .NET SDK 时可使用 `dotnet build -p:GamePath="游戏目录"` 编译源码；完整安装包由 `build.ps1` 生成。测试脚本需要 .NET 7 或更新运行时，只加载方法和应用补丁，不启动游戏、不读取玩家存档。
+输出为 `dist/IndoorCamping/` 和 `dist/IndoorCamping-0.1.1.zip`。也提供 `IndoorCamping/IndoorCamping.csproj`，有 .NET SDK 时可使用 `dotnet build -p:GamePath="游戏目录"` 编译源码；完整安装包由 `build.ps1` 生成。测试脚本需要 .NET 7 或更新运行时，只加载方法和应用补丁，不启动游戏、不读取玩家存档。
 
 ## 保存与兼容
 

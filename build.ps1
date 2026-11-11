@@ -22,5 +22,6 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'IndoorCamping/manifest.json'), 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'IndoorCamping/i18n') -Destination $output -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination $output
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'tests/MANUAL.md') -Destination $output
-Compress-Archive -Path $output -DestinationPath (Join-Path $PSScriptRoot 'dist/IndoorCamping-0.1.0.zip') -Force
+$manifest = Get-Content -LiteralPath (Join-Path $output 'manifest.json') -Raw | ConvertFrom-Json
+Compress-Archive -Path $output -DestinationPath (Join-Path $PSScriptRoot "dist/IndoorCamping-$($manifest.Version).zip") -Force
 Write-Output "Built $output"

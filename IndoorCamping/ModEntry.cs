@@ -35,6 +35,29 @@ internal sealed class CampingRecord
     public int WakeDay { get; set; }
 }
 
+// DayStarted/SaveLoaded can run while the engine is still finishing a fade.
+// Keep the request until completion, and bound the time spent locked in a warp.
+internal sealed class RecoveryGate
+{
+    private bool queued;
+    private int stableTicks;
+    private int warpTicks;
+    public bool IsWarping { get; private set; }
+    public void Queue() { if (!IsWarping) queued = true; }
+    public void Complete() { queued = false; IsWarping = false; stableTicks = warpTicks = 0; }
+    // 0: wait, 1: start, 2: timeout
+    public int Tick(bool settled)
+    {
+        if (IsWarping) return ++warpTicks >= 600 ? 2 : 0;
+        if (!queued) return 0;
+        if (!settled) { stableTicks = 0; return 0; }
+        if (++stableTicks < 2) return 0;
+        queued = false;
+        IsWarping = true;
+        return 1;
+    }
+}
+
 public sealed class ModEntry : Mod
 {
     internal static ModEntry Instance = null!;
@@ -43,6 +66,7 @@ public sealed class ModEntry : Mod
     private CampingRecord? pending;
     private int restoredDay = -1;
     private bool ready;
+    private readonly RecoveryGate recovery = new();
 
     public override void Entry(IModHelper helper)
     {
@@ -52,6 +76,8 @@ public sealed class ModEntry : Mod
         var harmony = new Harmony(ModManifest.UniqueID);
         try
         {
+            if (AccessTools.Field(typeof(Game1), "_isWarping") == null)
+                throw new MissingFieldException("Game1._isWarping is required for safe recovery.");
             harmony.Patch(AccessTools.Method(typeof(SObject), nameof(SObject.placementAction)),
                 prefix: new HarmonyMethod(typeof(ModEntry), nameof(PlacementPrefix)),
                 transpiler: new HarmonyMethod(typeof(ModEntry), nameof(PlacementTranspiler)));
@@ -68,9 +94,14 @@ public sealed class ModEntry : Mod
             Monitor.Log($"Indoor Camping disabled: incompatible game methods. {ex}", LogLevel.Error);
         }
         helper.Events.GameLoop.Saving += OnSaving;
-        helper.Events.GameLoop.DayStarted += (_, _) => RestoreMorning();
-        helper.Events.GameLoop.SaveLoaded += (_, _) => RestoreMorning();
-        helper.Events.GameLoop.ReturnedToTitle += (_, _) => { pending = null; restoredDay = -1; };
+        helper.Events.GameLoop.DayStarted += (_, _) => recovery.Queue();
+        helper.Events.GameLoop.SaveLoaded += (_, _) => recovery.Queue();
+        helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
+        helper.Events.GameLoop.ReturnedToTitle += (_, _) => { pending = null; restoredDay = -1; recovery.Complete(); };
+        helper.ConsoleCommands.Add("indoorcamping_recover", "Return home and clear a stuck camping transition.", (_, _) =>
+        {
+            if (Context.IsWorldReady && !Game1.IsMultiplayer) ReturnHome(new InvalidOperationException("Manual recovery requested."));
+        });
     }
 
     // Null means supported. Outdoor locations keep vanilla behavior.
@@ -204,18 +235,27 @@ public sealed class ModEntry : Mod
         else Game1.player.modData.Remove(SaveKey);
     }
 
+    private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
+    {
+        if (!Context.IsWorldReady || Game1.IsMultiplayer) return;
+        bool settled = !Game1.newDay && !Game1.newDaySync.hasInstance()
+            && Game1.activeClickableMenu == null && !Game1.dialogueUp && !Game1.eventUp
+            && !Game1.fadeToBlack && !Game1.fadeIn && !Game1.nonWarpFade
+            && !Game1.freezeControls && Game1.locationRequest == null;
+        int action = recovery.Tick(settled);
+        if (action == 1) RestoreMorning();
+        else if (action == 2) ReturnHome(new TimeoutException("Campsite warp did not complete within 600 update ticks."));
+    }
+
     private void RestoreMorning()
     {
-        if (!ready || Game1.IsMultiplayer || restoredDay == Game1.Date.TotalDays) return;
+        if (!ready || Game1.IsMultiplayer || restoredDay == Game1.Date.TotalDays) { recovery.Complete(); return; }
         CampingRecord? record = pending;
         try
         {
             if (record == null && Game1.player.modData.TryGetValue(SaveKey, out string json))
                 record = JsonConvert.DeserializeObject<CampingRecord>(json);
-            if (record == null || record.WakeDay != Game1.Date.TotalDays) return;
-            restoredDay = Game1.Date.TotalDays;
-            pending = null;
-            Game1.player.modData.Remove(SaveKey);
+            if (record == null || record.WakeDay != Game1.Date.TotalDays) { recovery.Complete(); return; }
             if (record.Version != 1 || record.MineLevel < 0 || record.MineLevel >= 77377)
                 throw new InvalidOperationException("Invalid camping record.");
             GameLocation location = record.MineLevel > 0
@@ -228,38 +268,80 @@ public sealed class ModEntry : Mod
             var request = Game1.getLocationRequest(location.NameOrUniqueName);
             request.OnWarp += () =>
             {
-                // Mine entry can override the requested tile with its ladder position.
-                // Apply the checked safe tile after normal location entry has completed.
-                Game1.player.Position = new Vector2(tile.Value.X, tile.Value.Y) * 64f;
-                Game1.displayFarmer = true;
-                Game1.player.sleptInTemporaryBed.Value = false;
-                Game1.player.isInBed.Value = false;
-                Game1.player.forceCanMove();
-                if (location is MineShaft)
+                if (!recovery.IsWarping) return; // A timeout or return to title cancelled this request.
+                try
                 {
-                    Game1.player.temporarilyInvincible = true;
-                    Game1.player.temporaryInvincibilityTimer = 0;
-                    Game1.player.currentTemporaryInvincibilityDuration = 1000;
+                    // Mine entry can override the requested tile with its ladder position.
+                    Game1.player.Position = new Vector2(tile.Value.X, tile.Value.Y) * 64f;
+                    Game1.displayFarmer = true;
+                    Game1.player.sleptInTemporaryBed.Value = false;
+                    Game1.player.isInBed.Value = false;
+                    Game1.player.forceCanMove();
+                    if (location is MineShaft)
+                    {
+                        Game1.player.temporarilyInvincible = true;
+                        Game1.player.temporaryInvincibilityTimer = 0;
+                        Game1.player.currentTemporaryInvincibilityDuration = 1000;
+                    }
+                    FinishRecovery();
+                    Monitor.Log($"Campsite warp completed: {location.NameOrUniqueName}.", LogLevel.Debug);
                 }
+                catch (Exception ex) { ReturnHome(ex); }
             };
             Game1.warpFarmer(request, tile.Value.X, tile.Value.Y, 2);
-            Monitor.Log($"Restored campsite: {location.NameOrUniqueName} ({tile.Value.X}, {tile.Value.Y}).", LogLevel.Debug);
+            Monitor.Log($"Campsite warp requested: {location.NameOrUniqueName} ({tile.Value.X}, {tile.Value.Y}).", LogLevel.Debug);
         }
         catch (Exception ex)
         {
-            pending = null;
-            restoredDay = Game1.Date.TotalDays;
-            Game1.player.modData.Remove(SaveKey);
+            ReturnHome(ex);
+        }
+    }
+
+    private void FinishRecovery()
+    {
+        pending = null;
+        restoredDay = Game1.Date.TotalDays;
+        Game1.player.modData.Remove(SaveKey);
+        recovery.Complete();
+    }
+
+    private void ReturnHome(Exception reason)
+    {
+        // Do not start another fade-based warp from a failed fade-based warp.
+        // First cancel our transition, then restore a normal home location directly.
+        FinishRecovery();
+        try
+        {
+            Game1.locationRequest = null;
             var home = Utility.getHomeOfFarmer(Game1.player);
+            Game1.currentLocation = home;
+            Game1.player.currentLocation = home;
             Point bed = home.GetPlayerBedSpot();
-            Game1.warpFarmer(home.NameOrUniqueName, bed.X, bed.Y, 2);
+            home.resetForPlayerEntry();
+            // Below the bed, rather than inside its collision box.
+            Point tile = FindSafeTile(home, new Point(bed.X, bed.Y + 1)) ?? new Point(bed.X, bed.Y + 1);
+            Game1.player.Position = new Vector2(tile.X, tile.Y) * 64f;
+        }
+        finally
+        {
+            AccessTools.StaticFieldRefAccess<bool>(typeof(Game1), "_isWarping") = false;
+            Game1.nonWarpFade = false;
+            Game1.globalFade = false;
+            Game1.fadeToBlack = false;
+            Game1.fadeIn = false;
+            Game1.fadeToBlackAlpha = 0f;
+            Game1.pauseTime = 0f;
+            Game1.freezeControls = false;
             Game1.displayFarmer = true;
             Game1.player.sleptInTemporaryBed.Value = false;
             Game1.player.isInBed.Value = false;
+            Game1.player.freezePause = 0;
+            Game1.player.FarmerSprite.PauseForSingleAnimation = false;
             Game1.player.forceCanMove();
-            Message("recovery-failed");
-            Monitor.Log($"Campsite recovery failed; returned home. {ex}", LogLevel.Warn);
+            Game1.forceSnapOnNextViewportUpdate = true;
         }
+        Message("recovery-failed");
+        Monitor.Log($"Campsite recovery failed; controls released and returned home. {reason}", LogLevel.Warn);
     }
 
     private static Point? FindSafeTile(GameLocation location, Point origin)

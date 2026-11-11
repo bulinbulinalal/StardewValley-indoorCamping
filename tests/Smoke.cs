@@ -23,7 +23,7 @@ internal static class Smoke
                 if (File.Exists(path)) return AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
             return null;
         };
-        try { Run(); Console.WriteLine("PASS: native method patching, tent footprint, record serialization, translations."); return 0; }
+        try { Run(); Console.WriteLine("PASS: native method patching, tent footprint, record serialization, translations, deferred recovery and stalled warp timeout."); return 0; }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
     }
 
@@ -32,6 +32,29 @@ internal static class Smoke
     {
         Assembly asm = Assembly.LoadFrom(Path.Combine(mod, "IndoorCamping.dll"));
         Type entry = asm.GetType("IndoorCamping.ModEntry", true)!;
+        var warpFlag = AccessTools.Field(typeof(Game1), "_isWarping");
+        Check(warpFlag != null && warpFlag.IsStatic && warpFlag.FieldType == typeof(bool), "Engine warp lock can be released");
+        // Regression: morning events may arrive during a fade; missing callbacks
+        // must time out rather than leave the player permanently warping.
+        Type gateType = asm.GetType("IndoorCamping.RecoveryGate", true)!;
+        object gate = Activator.CreateInstance(gateType)!;
+        void Queue() => gateType.GetMethod("Queue")!.Invoke(gate, null);
+        int Tick(bool settled) => (int)gateType.GetMethod("Tick")!.Invoke(gate, new object[] { settled })!;
+        void Complete() => gateType.GetMethod("Complete")!.Invoke(gate, null);
+        Queue();
+        for (int i = 0; i < 120; i++) Check(Tick(false) == 0, "Fade must not start a warp");
+        Check(Tick(true) == 0, "Wait for a second settled frame");
+        Check(Tick(false) == 0, "An interrupted fade resets readiness");
+        Check(Tick(true) == 0 && Tick(true) == 1, "Warp begins after two settled frames");
+        Queue(); // SaveLoaded and DayStarted can both queue the same morning.
+        for (int i = 0; i < 599; i++) Check(Tick(false) == 0, "No duplicate warp while waiting for callback");
+        Check(Tick(false) == 2, "A missing callback times out even while fading");
+        Complete();
+        Check(Tick(true) == 0, "Timeout cleanup must not repeat the warp");
+        Queue();
+        Check(Tick(true) == 0 && Tick(true) == 1, "A subsequent morning can recover");
+        Complete();
+        for (int i = 0; i < 650; i++) Check(Tick(true) == 0, "Completed recovery must not retry or time out");
         var harmony = new Harmony("IndoorCamping.Smoke");
         HarmonyMethod Hook(string name) => new HarmonyMethod(AccessTools.Method(entry, name));
         try
